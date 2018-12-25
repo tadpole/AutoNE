@@ -1,0 +1,7 @@
+data/
+result/
+embeddings/
+
+*.pyc
+*.swp
+*~
