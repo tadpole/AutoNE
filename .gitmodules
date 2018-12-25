@@ -1,0 +1,3 @@
+[submodule "embedding_test"]
+	path = embedding_test
+	url = git@github.com:tadpole/embedding_test.git
