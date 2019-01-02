@@ -4,6 +4,7 @@ import os, sys
 import networkx as nx
 import numpy as np
 from sklearn.cluster import SpectralClustering
+from sklearn import gaussian_process
 
 def split_network(G, N):
     sc = SpectralClustering(N, affinity='precomputed')
@@ -49,11 +50,11 @@ def load_graph(edgelist_filename, label_name=None):
     print("load graph", G.number_of_nodes(), G.number_of_edges())
     return G
 
-def run_target_model(method, emd_size, input_filename, output_dir, embedding_test_dir, **kargs):
+def run_target_model(method, input_filename, output_dir, embedding_test_dir, **kargs):
     sys.path.append(embedding_test_dir)
     from src.baseline import baseline
     with cd(embedding_test_dir):
-        baseline(method, None, emd_size, input_filename, output_dir, **kargs)
+        baseline(method, None, kargs['emd_size'], input_filename, output_dir, **kargs)
 
 def run_test(task, dataset_name, models, labels, save_filename, embedding_test_dir):
     sys.path.append(embedding_test_dir)
@@ -80,3 +81,20 @@ class cd:
 
     def __exit__(self, etype, value, traceback):
         os.chdir(self.savedPath)
+
+class GaussianProcessRegressor(object):
+    def __init__(self):
+        self.gp = gaussian_process.GaussianProcessRegressor()
+
+    def fit(self, X, y):
+        self.gp.fit(X, y)
+
+    def predict(self, ps, p_bound, w=None, num=100):
+        X = []
+        for k in zip(*[np.linspace(p_bound[i][0], p_bound[i][1], num=num) for i in ps]):
+            X.append(k)
+        if w is not None:
+            X = np.hstack((X, np.tile(w, (len(X), 1))))
+        y = self.gp.predict(X)
+        ind = np.argmax(y)
+        return X[ind], y[ind]
