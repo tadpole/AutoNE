@@ -7,6 +7,8 @@ import networkx as nx
 
 import utils
 
+embedding_test_dir = 'embedding_test'
+
 def sample_graph(G, output_dir, times=10):
     s_n = int(np.sqrt(G.number_of_nodes()))
     for t in range(times):
@@ -39,14 +41,39 @@ def run_models(method, input_filename, output_dir, embedding_test_dir=None):
             kargs = dict(zip(params.keys(), v))
             utils.run_target_model(method, emd_size, input_filename, output_dir, embedding_test_dir=embedding_test_dir, **kargs)
 
+def get_result(dataset_name, target_model, task, kargs, sampled_dir='', cache=True):
+    embedding_filename = utils.get_names(target_model, **kargs)
+    cf = os.path.abspath(os.path.join('result/{}'.format(dataset_name), sampled_dir, 'cf', embedding_filename))
+    embedding_filename = os.path.abspath(os.path.join('embeddings/{}'.format(dataset_name), sampled_dir, embedding_filename))
+    dataset_filename = os.path.abspath(os.path.join('data/{}'.format(dataset_name), sampled_dir, 'graph.edgelist'))
+    if (not cache) or (not os.path.exists(embedding_filename)) or (os.path.getmtime(embedding_filename) < os.path.getmtime(dataset_filename)):
+        utils.run_target_model(target_model, kargs['emd_size'], dataset_filename, os.path.dirname(embedding_filename), embedding_test_dir=embedding_test_dir, **kargs)
+    if (not cache) or (not os.path.exists(cf)) or (os.path.getmtime(cf) < os.path.getmtime(embedding_filename)):
+        labels = os.path.abspath(os.path.join(os.path.dirname(dataset_filename), 'label.txt'))
+        utils.run_test(task, dataset_name, [embedding_filename], labels, cf, embedding_test_dir=embedding_test_dir)
+    return np.loadtxt(cf, dtype=float)
+
+def mle(dataset_name, target_model, task='classification', sampled_number=10):
+    params = {'emd_size': [128],
+              'p': [0.5, 1, 2],
+              'q': [0.5, 1, 2],
+              'num-walks': [10],
+              'walk-length': [80],
+              'window-size': [10]}
+    for i in range(sampled_number):
+        for v in itertools.product(*params.values()):
+            kargs = dict(zip(params.keys(), v))
+            res = get_result(dataset_name, target_model, task, kargs, 'sampled/s{}'.format(i))
+            print(res)
+
 def main():
     dataset_name = 'cora'
     target_model = 'node2vec'
     task = 'classification'
-    embedding_test_dir = '/home/tuke/embedding_test'
     sampled_number = 10
-    steps = [5] # 0: sampling, 1: run target model, 2: test performance 3: run whole graph embedding 4: run meta learner
-
+    steps = [1, 2, 3, 4] # 0: sampling, 1: run target model, 2: test performance 3: run whole graph embedding 4: run meta learner
+    mle(dataset_name, target_model, task)
+    return 0
     if 0 in steps:
         dataset_path = 'data/{0}/{0}.edgelist'.format(dataset_name)
         label_path = 'data/{0}/{0}_label.txt'.format(dataset_name)
@@ -119,8 +146,8 @@ def main():
     if 5 in steps:
         input_filename = os.path.abspath('data/{0}/{0}.edgelist'.format(dataset_name))
         output_dir = os.path.abspath('embeddings/{}'.format(dataset_name))
-        kargs = {'p': 0.00001,
-                  'q': 1.33333,
+        kargs = {'p': 0.0001,
+                  'q': 1.3333,
                   'num-walks': 10,
                   'walk-length': 80,
                   'window-size': 10}
@@ -133,7 +160,7 @@ def main():
         models = list(map(lambda a: os.path.join(embedding_dir, a),
                             filter(lambda x: x.startswith(target_model), os.listdir(embedding_dir))))
         print(models)
-        labels = 'data/{0}/{0}_label.txt'.format(dataset_name)
+        labels = os.path.abspath('data/{0}/{0}_label.txt'.format(dataset_name))
         utils.run_test(task, dataset_name, models, labels, save_filename, embedding_test_dir)
 
 if __name__ == '__main__':

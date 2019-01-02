@@ -63,6 +63,12 @@ def run_test(task, dataset_name, models, labels, save_filename, embedding_test_d
     with cd(embedding_test_dir):
         test(task, None, dataset_name, models, save_filename=save_filename, **args)
 
+def get_names(method, **args):
+    if method == 'node2vec':
+        kargs = {'emd_size': 128, 'num-walks': 10, 'walk-length': 80, 'window-size': 10, 'p': args['p'], 'q': args['q']}
+        embedding_filename = os.path.join("{}_{:d}_{:d}_{:d}_{:d}_{:.4f}_{:.4f}".format(method, kargs['emd_size'], kargs['num-walks'], kargs['walk-length'], kargs['window-size'], kargs['p'], kargs['q']))
+        return embedding_filename
+
 class cd:
     """Context manager for changing the current working directory"""
     def __init__(self, newPath):
