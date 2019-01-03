@@ -104,6 +104,40 @@ def mle(dataset_name, target_model, task='classification', sampled_number=10):
     res = get_result(dataset_name, target_model, task, args, '')
     print(res)
 
+def mle_large(dataset_name, target_model, task):
+    params = {'emd_size': [128],
+              'p': [0.0001, 0.5, 1, 2],
+              'q': [0.0001, 0.5, 1, 2],
+              'num-walks': [10],
+              'walk-length': [80],
+              'window-size': [10]}
+    X = []
+    y = []
+    ps = ['p', 'q']
+    p_bound = {'p': [0.0001, 2],
+               'q': [0.0001, 2]}
+    for v in itertools.product(*params.values()):
+        kargs = dict(zip(params.keys(), v))
+        print(kargs)
+        res = get_result(dataset_name, target_model, task, kargs, '')
+        X.append([kargs[p] for p in ps])
+        y.append(res)
+    X = np.array(X)
+    y = np.array(y)
+    gp = utils.GaussianProcessRegressor()
+    gp.fit(X, y[:, 0])
+    X_b, y_b = gp.predict(ps, p_bound, None)
+    print(X_b, y_b)
+
+    args = {'emd_size': 128,
+              'p': X_b[0],
+              'q': X_b[1],
+              'num-walks': 10,
+              'walk-length': 80,
+              'window-size': 10}
+    res = get_result(dataset_name, target_model, task, args, '')
+    print(res)
+
 def grid_search(dataset_name, target_model, task):
     params = {'emd_size': [128],
               'p': [0.0001, 0.5, 1, 2],
@@ -125,12 +159,13 @@ def grid_search(dataset_name, target_model, task):
     print(X, y)
 
 def main():
-    dataset_name = 'cora'
+    dataset_name = 'BlogCatalog'
     target_model = 'node2vec'
     task = 'classification'
-    sampled_number = 10
+    sampled_number = 20
     #mle(dataset_name, target_model, task)
-    grid_search(dataset_name, target_model, task)
+    #mle_large(dataset_name, target_model, task)
+    #grid_search(dataset_name, target_model, task)
 
 if __name__ == '__main__':
     main()
