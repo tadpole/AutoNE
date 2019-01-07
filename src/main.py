@@ -28,20 +28,8 @@ def sample_graph(G, output_dir, times=10):
         with utils.write_with_create(label_path) as f:
             for i, data in Gs.nodes(data=True):
                 if 'label' in data:
-                    print(i, data['label'], file=f)
-
-
-def run_models(method, input_filename, output_dir, embedding_test_dir=None):
-    if method == 'node2vec':
-        emd_size = 128
-        params = {'p': [0.5, 1, 2],
-                  'q': [0.5, 1, 2],
-                  'num-walks': [10],
-                  'walk-length': [80],
-                  'window-size': [10]}
-        for v in itertools.product(*params.values()):
-            kargs = dict(zip(params.keys(), v))
-            utils.run_target_model(method, emd_size, input_filename, output_dir, embedding_test_dir=embedding_test_dir, **kargs)
+                    for j in data['label']:
+                        print(i, j, file=f)
 
 def get_result(dataset_name, target_model, task, kargs, sampled_dir='', cache=True):
     embedding_filename = utils.get_names(target_model, **kargs)
@@ -68,8 +56,8 @@ def get_wne(dataset_name, sampled_dir='', cache=True):
 
 def mle(dataset_name, target_model, task='classification', sampled_number=10):
     params = {'emd_size': [128],
-              'p': [0.5, 1, 2],
-              'q': [0.5, 1, 2],
+              'p': utils.rand(4, 0.0001, 2),
+              'q': utils.rand(4, 0.0001, 2),
               'num-walks': [10],
               'walk-length': [80],
               'window-size': [10]}
@@ -82,7 +70,6 @@ def mle(dataset_name, target_model, task='classification', sampled_number=10):
         wne = get_wne(dataset_name, 'sampled/s{}'.format(i), cache=True)
         for v in itertools.product(*params.values()):
             kargs = dict(zip(params.keys(), v))
-            print(kargs)
             res = get_result(dataset_name, target_model, task, kargs, 'sampled/s{}'.format(i))
             X.append(np.hstack(([kargs[p] for p in ps], wne)))
             y.append(res)
@@ -93,7 +80,8 @@ def mle(dataset_name, target_model, task='classification', sampled_number=10):
 
     wne = get_wne(dataset_name, '', cache=True)
     X_b, y_b = gp.predict(ps, p_bound, wne)
-    print(X_b, y_b)
+    print("##################################################")
+    print("best params, ", X_b, y_b)
 
     args = {'emd_size': 128,
               'p': X_b[0],
@@ -102,7 +90,8 @@ def mle(dataset_name, target_model, task='classification', sampled_number=10):
               'walk-length': 80,
               'window-size': 10}
     res = get_result(dataset_name, target_model, task, args, '')
-    print(res)
+    print("real acc, ", res)
+    print("##################################################")
 
 def mle_large(dataset_name, target_model, task):
     params = {'emd_size': [128],
@@ -118,7 +107,6 @@ def mle_large(dataset_name, target_model, task):
                'q': [0.0001, 2]}
     for v in itertools.product(*params.values()):
         kargs = dict(zip(params.keys(), v))
-        print(kargs)
         res = get_result(dataset_name, target_model, task, kargs, '')
         X.append([kargs[p] for p in ps])
         y.append(res)
@@ -127,7 +115,8 @@ def mle_large(dataset_name, target_model, task):
     gp = utils.GaussianProcessRegressor()
     gp.fit(X, y[:, 0])
     X_b, y_b = gp.predict(ps, p_bound, None)
-    print(X_b, y_b)
+    print("##################################################")
+    print("best params, ", X_b, y_b)
 
     args = {'emd_size': 128,
               'p': X_b[0],
@@ -136,7 +125,8 @@ def mle_large(dataset_name, target_model, task):
               'walk-length': 80,
               'window-size': 10}
     res = get_result(dataset_name, target_model, task, args, '')
-    print(res)
+    print("real acc, ", res)
+    print("##################################################")
 
 def grid_search(dataset_name, target_model, task):
     params = {'emd_size': [128],
@@ -150,20 +140,32 @@ def grid_search(dataset_name, target_model, task):
     ps = ['p', 'q']
     for v in itertools.product(*params.values()):
         kargs = dict(zip(params.keys(), v))
-        print(kargs)
         res = get_result(dataset_name, target_model, task, kargs, '')
         X.append([kargs[p] for p in ps])
         y.append(res)
     X = np.array(X)
     y = np.array(y)
-    print(X, y)
+    for i in zip(X, y):
+        print(i)
+    ind = np.argmax(y[:, 0])
+    print("##################################################")
+    print("best params, ", X[ind], y[ind])
+    print("##################################################")
 
 def main():
+    seed = 0
+    random.seed(seed)
+    np.random.seed(seed)
+
     dataset_name = 'BlogCatalog'
     target_model = 'node2vec'
     task = 'classification'
-    sampled_number = 20
-    #mle(dataset_name, target_model, task)
+    dataset_path = 'data/{}/graph.edgelist'.format(dataset_name)
+    label_path = 'data/{}/label.txt'.format(dataset_name)
+    G = utils.load_graph(dataset_path, label_path)
+    sampled_number = int(np.sqrt(G.number_of_nodes()))
+    #sample_graph(G, 'data/{}/sampled'.format(dataset_name), times=sampled_number)
+    mle(dataset_name, target_model, task)
     #mle_large(dataset_name, target_model, task)
     #grid_search(dataset_name, target_model, task)
 

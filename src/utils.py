@@ -1,10 +1,17 @@
 import random
 import os, sys
+import collections
 
 import networkx as nx
 import numpy as np
 from sklearn.cluster import SpectralClustering
 from sklearn import gaussian_process
+
+def rand(size, a, b, decimals=4):
+    res = np.random.random_sample(size)*(b-a)+a
+    if decimals is not None:
+        return np.around(res, decimals=decimals)
+    return res
 
 def split_network(G, N):
     sc = SpectralClustering(N, affinity='precomputed')
@@ -45,8 +52,12 @@ def load_graph(edgelist_filename, label_name=None):
     G = nx.read_edgelist(edgelist_filename, nodetype=int)
     if label_name is not None:
         labels = np.loadtxt(label_name, dtype=int)
+        ### multi-label
+        l = collections.defaultdict(list)
+        for i, j in labels:
+            l[i].append(j)
         ### Warning:: The call order of arguments `values` and `name` switched between v1.x & v2.x.
-        nx.set_node_attributes(G, dict(labels), 'label')
+        nx.set_node_attributes(G, l, 'label')
     print("load graph", G.number_of_nodes(), G.number_of_edges())
     return G
 
