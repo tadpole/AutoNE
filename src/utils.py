@@ -1,11 +1,13 @@
 import random
 import os, sys
 import collections
+import itertools
 
 import networkx as nx
 import numpy as np
 from sklearn.cluster import SpectralClustering
 from sklearn import gaussian_process
+from scipy.optimize import minimize
 
 def rand(size, a, b, decimals=4):
     res = np.random.random_sample(size)*(b-a)+a
@@ -70,16 +72,57 @@ def run_target_model(method, input_filename, output_dir, embedding_test_dir, **k
 def run_test(task, dataset_name, models, labels, save_filename, embedding_test_dir):
     sys.path.append(embedding_test_dir)
     from src.test import test
-    args = {'radio': [0.7]}
+    args = {'radio': [0.8]}
     args['label_name'] = labels
     with cd(embedding_test_dir):
         test(task, None, dataset_name, models, save_filename=save_filename, **args)
 
 def get_names(method, **args):
     if method == 'node2vec':
-        kargs = {'emd_size': 128, 'num-walks': 10, 'walk-length': 80, 'window-size': 10, 'p': args['p'], 'q': args['q']}
+        kargs = args
         embedding_filename = os.path.join("{}_{:d}_{:d}_{:d}_{:d}_{:.4f}_{:.4f}".format(method, kargs['emd_size'], kargs['num-walks'], kargs['walk-length'], kargs['window-size'], kargs['p'], kargs['q']))
         return embedding_filename
+
+def random_with_bound_type(bound, type_):
+    res = []
+    for b, t in zip(bound, type_):
+        if t == int:
+            res.append(random.randint(*b))
+        elif t == float:
+            res.append(rand(1, *b)[0])
+        else:
+            res.append(None)
+    return res
+
+
+def find_b_opt_max(gp, ps, p_bound, p_type, w=None, n_warmup=100000, n_iter=250):
+    """
+    refer to acq_max https://github.com/fmfn/BayesianOptimization/blob/master/bayes_opt/util.py
+    """
+    X = []
+    for k in range(n_warmup):
+        X.append(random_with_bound_type(p_bound, p_type))
+    if w is not None:
+        X = np.hstack((X, np.tile(w, (len(X), 1))))
+    y = gp.predict(X)
+    ind = np.argmax(y)
+    x_max, y_max = X[ind][:len(ps)], y[ind]
+    temp_w = [] if w is None else w
+    def temp_f(x):
+        return gp.predict([list(x)+list(temp_w)])[0]
+    for i in range(n_iter):
+        x_try = random_with_bound_type(p_bound, p_type)
+        res = minimize(lambda x: -gp.predict([list(x)+list(temp_w)])[0],
+                        x_try,
+                        bounds=p_bound,
+                        method='L-BFGS-B')
+        if not res.success:
+            continue
+        if -res.fun >= y_max:
+            x_max = res.x
+            y_max = -res.fun
+
+    return x_max, y_max
 
 class cd:
     """Context manager for changing the current working directory"""
@@ -95,17 +138,74 @@ class cd:
 
 class GaussianProcessRegressor(object):
     def __init__(self):
-        self.gp = gaussian_process.GaussianProcessRegressor()
+        self.gp = gaussian_process.GaussianProcessRegressor(
+                kernel=gaussian_process.kernels.Matern(nu=2.5),
+                alpha=1e-6,
+                normalize_y=True,
+                n_restarts_optimizer=10)
 
     def fit(self, X, y):
         self.gp.fit(X, y)
 
-    def predict(self, ps, p_bound, w=None, num=100):
-        X = []
-        for k in zip(*[np.linspace(p_bound[i][0], p_bound[i][1], num=num) for i in ps]):
-            X.append(k)
-        if w is not None:
-            X = np.hstack((X, np.tile(w, (len(X), 1))))
-        y = self.gp.predict(X)
-        ind = np.argmax(y)
-        return X[ind], y[ind]
+    def predict(self, ps, p_bound, type_, w=None):
+        return find_b_opt_max(self.gp, ps, p_bound, type_, w, n_iter=0)
+
+class RandomState(object):
+    def __init__(self):
+        self.state = None
+
+    def set_seed(self, seed):
+        random.seed(seed)
+        np.random.seed(seed)
+
+    def save_state(self):
+        self.state = (random.getstate(), np.random.get_state())
+
+    def load_state(self):
+        random.setstate(self.state[0])
+        np.random.set_state(self.state[1])
+
+class Params(object):
+    def __init__(self, method):
+        self.method = method
+        if method == 'node2vec':
+            self.arg_names = ['num-walks', 'walk-length', 'window-size', 'p', 'q']
+            self.type_ = [int, int, int, float, float]
+            self.bound = [(2, 10), (2, 80), (2, 10), (0.0001, 2), (0.0001, 2)]
+            self.ind = dict(zip(self.arg_names, range(len(self.arg_names))))
+
+    def get_type(self, ps=None):
+        if ps is None:
+            return self.type_
+        return [self.type_[self.ind[p]] for p in ps]
+
+    def get_bound(self, ps=None):
+        if ps is None:
+            return self.bound
+        return [self.bound[self.ind[p]] for p in ps]
+
+    def convert(self, X, ps=None):
+        type_ = self.get_type(ps)
+        bound = np.array(self.get_bound(ps))
+        X = np.clip(X, bound[:, 0], bound[:, 1])
+        res = []
+        for x, t in zip(X, type_):
+            if t == int:
+                res.append(int(round(x, 0)))
+            elif t == float:
+                res.append(round(x, 4))
+        return res
+
+    def random_args(self, ps=None, emd_size=128, known_args={}):
+        if ps is None:
+            ps = self.arg_names
+        type_ = self.get_type(ps)
+        bound = self.get_bound(ps)
+        res = random_with_bound_type(bound, type_)
+        d = dict(zip(ps, res))
+        for arg in known_args:
+            d[arg] = known_args[arg]
+        d['emd_size'] = emd_size
+        return d
+
+
