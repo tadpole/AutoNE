@@ -72,10 +72,17 @@ def run_target_model(method, input_filename, output_dir, embedding_test_dir, **k
 def run_test(task, dataset_name, models, labels, save_filename, embedding_test_dir):
     sys.path.append(embedding_test_dir)
     from src.test import test
-    args = {'radio': [0.8]}
-    args['label_name'] = labels
+    args = {}
+    if task == 'classification':
+        args['radio'] = [0.8]
+        args['label_name'] = labels
+        evalution = None
+    elif task == 'link_predict':
+        evalution = 'AUC'
+        args['data_dir'] = labels
+
     with cd(embedding_test_dir):
-        test(task, None, dataset_name, models, save_filename=save_filename, **args)
+        test(task, evalution, dataset_name, models, save_filename=save_filename, **args)
 
 def get_names(method, **args):
     if method == 'node2vec':
@@ -95,7 +102,7 @@ def random_with_bound_type(bound, type_):
     return res
 
 
-def find_b_opt_max(gp, ps, p_bound, p_type, w=None, n_warmup=100000, n_iter=250):
+def find_b_opt_max(gp, ps, p_bound, p_type, w=None, n_warmup=100000, n_iter=100):
     """
     refer to acq_max https://github.com/fmfn/BayesianOptimization/blob/master/bayes_opt/util.py
     """
@@ -148,7 +155,7 @@ class GaussianProcessRegressor(object):
         self.gp.fit(X, y)
 
     def predict(self, ps, p_bound, type_, w=None):
-        return find_b_opt_max(self.gp, ps, p_bound, type_, w, n_iter=0)
+        return find_b_opt_max(self.gp, ps, p_bound, type_, w)
 
 class RandomState(object):
     def __init__(self):
@@ -171,7 +178,7 @@ class Params(object):
         if method == 'node2vec':
             self.arg_names = ['num-walks', 'walk-length', 'window-size', 'p', 'q']
             self.type_ = [int, int, int, float, float]
-            self.bound = [(2, 10), (2, 80), (2, 10), (0.0001, 2), (0.0001, 2)]
+            self.bound = [(2, 20), (2, 80), (2, 10), (0.0001, 2), (0.0001, 2)]
             self.ind = dict(zip(self.arg_names, range(len(self.arg_names))))
 
     def get_type(self, ps=None):
@@ -208,4 +215,14 @@ class Params(object):
         d['emd_size'] = emd_size
         return d
 
+def analysis_result(data_dir):
+    fs = os.listdir(data_dir)
+    fs = np.array([np.loadtxt(os.path.join(data_dir, f)) for f in fs if not f.endswith('names')])
+    print(fs.shape)
+    scale = 100
+    d = (fs[:, 0]*scale).astype(int)
+    for k, v in collections.Counter(d).most_common():
+        print(k*1.0/scale, v, "{:.2f}".format(v*1.0/fs.shape[0]))
 
+if __name__ == '__main__':
+    analysis_result('result/BlogCatalog/cf/')
