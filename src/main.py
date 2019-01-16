@@ -1,6 +1,9 @@
 import os, sys
 import random
 import itertools
+import time
+import copy
+import functools
 
 import numpy as np
 import networkx as nx
@@ -62,7 +65,7 @@ def sample_graph(G, output_dir, times=10, with_test=False, radio=0.8):
                     print(i, j, file=f)
 
 
-def get_result(dataset_name, target_model, task, kargs, sampled_dir='', cache=True):
+def get_result(dataset_name, target_model, task, kargs, sampled_dir='', debug=False, cache=True):
     rs = utils.RandomState()
     rs.save_state()
     rs.set_seed(0)
@@ -74,7 +77,7 @@ def get_result(dataset_name, target_model, task, kargs, sampled_dir='', cache=Tr
     embedding_filename = os.path.abspath(os.path.join('embeddings/{}'.format(dataset_name), sampled_dir, embedding_filename))
     dataset_filename = os.path.abspath(os.path.join('data/{}'.format(dataset_name), sampled_dir, 'graph.edgelist'))
     if (not cache) or (not os.path.exists(embedding_filename)) or (os.path.getmtime(embedding_filename) < os.path.getmtime(dataset_filename)):
-        utils.run_target_model(target_model, dataset_filename, os.path.dirname(embedding_filename), embedding_test_dir=embedding_test_dir, **kargs)
+        utils.run_target_model(target_model, dataset_filename, os.path.dirname(embedding_filename), embedding_test_dir=embedding_test_dir, debug=debug, **kargs)
     if (not cache) or (not os.path.exists(cf)) or (os.path.getmtime(cf) < os.path.getmtime(embedding_filename)):
         if task == 'classification':
             labels = os.path.abspath(os.path.join(os.path.dirname(dataset_filename), 'label.txt'))
@@ -82,7 +85,10 @@ def get_result(dataset_name, target_model, task, kargs, sampled_dir='', cache=Tr
             labels = os.path.abspath(os.path.join(os.path.dirname(dataset_filename)))
         utils.run_test(task, dataset_name, [embedding_filename], labels, cf, embedding_test_dir=embedding_test_dir)
     rs.load_state()
-    return np.loadtxt(cf, dtype=float)
+    res = np.loadtxt(cf, dtype=float)
+    if task == 'classification':
+        res = res[0]
+    return res
 
 def get_wne(dataset_name, sampled_dir='', cache=True):
     dataset_filename = os.path.abspath(os.path.join('data/{}'.format(dataset_name), sampled_dir, 'graph.edgelist'))
@@ -90,109 +96,137 @@ def get_wne(dataset_name, sampled_dir='', cache=True):
     save_path = os.path.abspath(os.path.join('embeddings/{}'.format(dataset_name), sampled_dir, 'wme.embeddings'))
     if (not cache) or (not os.path.exists(save_path)) or (os.path.getmtime(save_path) < os.path.getmtime(dataset_filename)):
         G = utils.load_graph(dataset_filename, label_name=None)
-        wne = netlsd.heat(G, timescales=np.logspace(-2, 2, 10))
+        do_full = (G.number_of_nodes()<10000)
+        eigenvalues = 'full' if do_full else 'auto'
+        wne = netlsd.heat(G, timescales=np.logspace(-2, 2, 10), eigenvalues=eigenvalues)
         with utils.write_with_create(save_path) as f:
             print(" ".join(map(str, wne)), file=f)
     return np.loadtxt(save_path)
 
-def mle(dataset_name, target_model, task='classification', sampled_number=10, without_wne=False, k=16, s=0):
-    X = []
-    y = []
-    ps = ['num-walks', 'walk-length', 'window-size', 'p', 'q']
-    params = utils.Params(target_model)
-    for i in range(sampled_number):
-        wne = get_wne(dataset_name, 'sampled/s{}'.format(i), cache=True)
-        for v in range(k):
-            kargs = params.random_args(ps)
-            print(kargs)
-            res = get_result(dataset_name, target_model, task, kargs, 'sampled/s{}'.format(i))
-            if without_wne:
-                X.append([kargs[p] for p in ps])
-            else:
-                X.append(np.hstack(([kargs[p] for p in ps], wne)))
-            y.append(res)
-    X = np.vstack(X)
-    y = np.vstack(y)
-    gp = utils.GaussianProcessRegressor()
-    gp.fit(X, y[:, 0])
-
+def _get_mle_result(gp, dataset_name, target_model, task, without_wne, params, ps, s, X, y):
     wne = get_wne(dataset_name, '', cache=True) if not without_wne else None
-    X_b_t, res_t = None, [-1.0, -1.0]
-    print("##################################################")
+    X_b_t, res_t = None, -1.0
+    X_t = copy.deepcopy(X)
+    y_t = copy.deepcopy(y)
     for i in range(s):
         X_b, y_b = gp.predict(ps, params.get_bound(ps), params.get_type(ps), wne)
         X_b = params.convert(X_b, ps)
-        print("params, ", X_b, y_b)
 
         args = params.random_args(ps=ps, known_args=dict(zip(ps, X_b)))
         res = get_result(dataset_name, target_model, task, args, '')
-        print("acc, ", res)
-        if res_t[0] < res[0]:
+        if res_t < res:
             res_t = res
             X_b_t = X_b
         if without_wne:
             X_b = [X_b]
         else:
             X_b = np.hstack((X_b, wne))
-        X = np.vstack((X, X_b))
-        y = np.vstack((y, res))
-        gp.fit(X, y[:, 0])
+        X_t = np.vstack((X_t, X_b))
+        y_t.append(res)
+        gp.fit(X_t, y_t)
     X_b, y_b = gp.predict(ps, params.get_bound(ps), params.get_type(ps), wne)
     X_b = params.convert(X_b, ps)
-    print("params, ", X_b, y_b)
 
     args = params.random_args(ps=ps, known_args=dict(zip(ps, X_b)))
     res = get_result(dataset_name, target_model, task, args, '')
-    print("acc, ", res)
-    if res_t[0] < res[0]:
+    if res_t < res:
         res_t = res
         X_b_t = X_b
-    print("best params, ", X_b_t, res_t)
-    print("##################################################")
     return X_b_t, res_t
 
-def grid_search(dataset_name, target_model, task, s=4):
-    params = {'emd_size': [128],
-              'p': np.linspace(0.0001, 2, s),
-              'q': np.linspace(0.0001, 2, s),
-              'num-walks': [10],
-              'walk-length': [80],
-              'window-size': [10]}
-    X = []
-    y = []
-    ps = ['p', 'q']
-    for v in itertools.product(*params.values()):
-        kargs = dict(zip(params.keys(), v))
-        res = get_result(dataset_name, target_model, task, kargs, '')
-        X.append([kargs[p] for p in ps])
-        y.append(res)
-    X = np.array(X)
-    y = np.array(y)
-    for i in zip(X, y):
-        print(i)
-    ind = np.argmax(y[:, 0])
-    print("##################################################")
-    print("best params, ", X[ind], y[ind])
-    print("##################################################")
-
-def random_search(dataset_name, target_model, task, k=16):
+def mle(dataset_name, target_model, task='classification', sampled_number=10, without_wne=False, k=16, s=0, times=100, print_iter=10, debug=False):
     X = []
     y = []
     ps = ['num-walks', 'walk-length', 'window-size', 'p', 'q']
     params = utils.Params(target_model)
+    total_t = 0.0
+    info = []
+    for t in range(times):
+        b_t = time.time()
+        i = random.randint(0, sampled_number)
+        wne = get_wne(dataset_name, 'sampled/s{}'.format(i), cache=True)
+        for v in range(k):
+            kargs = params.random_args(ps)
+            res = get_result(dataset_name, target_model, task, kargs, 'sampled/s{}'.format(i))
+            if without_wne:
+                X.append([kargs[p] for p in ps])
+            else:
+                X.append(np.hstack(([kargs[p] for p in ps], wne)))
+            y.append(res)
+        e_t = time.time()
+        total_t += e_t-b_t
+        if t % print_iter == 0:
+            gp = utils.GaussianProcessRegressor()
+            gp.fit(np.vstack(X), y)
+            X_temp, res_temp = _get_mle_result(gp, dataset_name, target_model, task, without_wne, params, ps, s, X, y)
+            if debug:
+                info.append([res_temp, total_t])
+            print('iters: {}/{}, params: {}, res: {}, time: {:.4f}s'.format(t, times, X_temp, res_temp, total_t))
+    X = np.vstack(X)
+    gp = utils.GaussianProcessRegressor()
+    gp.fit(X, y)
+    X_b_t, res_b_t = _get_mle_result(gp, dataset_name, target_model, task, without_wne, params, ps, s, X, y)
+    if debug:
+        return X_b_t, res_b_t, debug
+    return X_b_t, res_b_t
+
+def mle_m(dataset_name, target_model, task='classification', sampled_number=10,  k=16):
+    ps = ['num-walks', 'walk-length', 'window-size', 'p', 'q']
+    params = utils.Params(target_model)
+    info = []
+    gps = []
+    wnes = []
+    for i in range(sampled_number):
+        X = []
+        y = []
+        wne = get_wne(dataset_name, 'sampled/s{}'.format(i), cache=True)
+        for v in range(k):
+            kargs = params.random_args(ps)
+            res = get_result(dataset_name, target_model, task, kargs, 'sampled/s{}'.format(i))
+            X.append([kargs[p] for p in ps])
+            y.append(res)
+        wnes.append(wne)
+        gp = utils.GaussianProcessRegressor()
+        gp.fit(np.vstack(X), y)
+        gps.append(gp)
+    wne = get_wne(dataset_name, '', cache=True)
+    gp = utils.GaussianProcessRegressor()
+    sims = utils.softmax([netlsd.compare(wne, w) for w in wnes])
+    gp.gp.kernel = functools.reduce(lambda i, j: i+j, map(lambda x: x[0].gp.kernel_*x[1], zip(gps, sims)))
+    gp.gp.kernel_ = gp.gp.kernel
+    X_b_t, res_t = None, -1.0
+    X_b, y_b = gp.predict(ps, params.get_bound(ps), params.get_type(ps))
+    X_b = params.convert(X_b, ps)
+
+    args = params.random_args(ps=ps, known_args=dict(zip(ps, X_b)))
+    res = get_result(dataset_name, target_model, task, args, '')
+    if res_t < res:
+        res_t = res
+        X_b_t = X_b
+    return X_b_t, res_t
+
+def random_search(dataset_name, target_model, task, k=16, debug=False):
+    X = []
+    y = []
+    ps = ['num-walks', 'walk-length', 'window-size', 'p', 'q']
+    params = utils.Params(target_model)
+    b_t = time.time()
+    info = []
     for v in range(k):
         kargs = params.random_args(ps)
         res = get_result(dataset_name, target_model, task, kargs, '')
         X.append([kargs[p] for p in ps])
         y.append(res)
+        ind = np.argmax(y)
+        total_t = time.time()-b_t
+        if debug:
+            info.append([y[ind], total_t])
+        print('iters: {}/{}, params: {}, res: {}, time: {:.4f}s'.format(v, k, X[ind], y[ind], total_t))
     X = np.array(X)
     y = np.array(y)
-    for i in zip(X, y):
-        print(i)
-    ind = np.argmax(y[:, 0])
-    print("##################################################")
-    print("best params, ", X[ind], y[ind])
-    print("##################################################")
+    ind = np.argmax(y)
+    if debug:
+        return X[ind], y[ind], info
     return X[ind], y[ind]
 
 
@@ -205,7 +239,7 @@ def b_opt(dataset_name, target_model, task, k=16):
         args = params.convert(x, ps)
         kargs = dict(zip(ps, args))
         kargs['emd_size'] = 128
-        return get_result(dataset_name, target_model, task, kargs, '')[0]
+        return get_result(dataset_name, target_model, task, kargs, '')
     opt = BayesianOptimization(
             f=black_box_function,
             pbounds=p_bound,
@@ -217,11 +251,11 @@ def b_opt(dataset_name, target_model, task, k=16):
     return X, y
 
 def main():
-    seed = 0
-    random.seed(seed)
-    np.random.seed(seed)
+    #seed = 10
+    #random.seed(seed)
+    #np.random.seed(seed)
 
-    dataset_name = 'BlogCatalog'#'cora'
+    dataset_name = 'citeseer'
     target_model = 'node2vec'
     task = 'link_predict'
     dataset_path = 'data/{}/graph.edgelist'.format(dataset_name)
@@ -229,18 +263,52 @@ def main():
     if task == 'link_predict':
         dataset_name = dataset_name+'_0.8'
         label_path=None
-    G = utils.load_graph(dataset_path, label_path)
-    sampled_number = int(np.sqrt(G.number_of_nodes()))
+    #G = utils.load_graph(dataset_path, label_path)
+    #sampled_number = int(np.sqrt(G.number_of_nodes()))
     #sample_graph(G, 'data/{}/sampled'.format(dataset_name), times=sampled_number, with_test=True)
-    ms = ['mle', 'mle_w', 'mle_s']
+    ms = ['mle', 'random_search', 'b_opt', 'mle_w', 'mle_s']
+    ms = ['mle', 'mle_m', 'random_search', 'b_opt']
     ks = 5
-    times = 5
+
+    for m in ms:
+        res = []
+        save_filename = 'result/{}/res_{}_{}.npz'.format(dataset_name, m, target_model)
+        for i in range(ks):
+            info = []
+            if m == 'mle':
+                X, y, info = mle(dataset_name, target_model, task, sampled_number=10, without_wne=False, k=1, s=0, times=300, print_iter=20, debug=True)
+            elif m == 'mle_m':
+                for k in [3, 5, 10, 15, 20]:
+                    b_t = time.time()
+                    X, y = mle_m(dataset_name, target_model, task, sampled_number=10, k=k)
+                    e_t = time.time()
+                    info.append([y, e_t-b_t])
+            elif m == 'random_search':
+                X, y, info = random_search(dataset_name, target_model, task, k=10, debug=True)
+            elif m == 'b_opt':
+                b_t = time.time()
+                X, y = b_opt(dataset_name, target_model, task, k=10)
+                e_t = time.time()
+                info.append([y, e_t-b_t])
+            res.append(info)
+        print(m, res)
+        np.savez(save_filename, res=res)
+
+    #X, y = random_search(dataset_name, target_model, task, k=10)
+    #b_t = time.time()
+    #X, y = b_opt(dataset_name, target_model, task, k=10)
+    #print("time: {:.4f}".format(time.time()-b_t))
+
+    """
     for m in ms:
         for k in range(1, ks+1):
             Xs, ys = [], []
+            Ts = []
+            t_b = time.time()
             for i in range(times):
                 if m == 'mle':
-                    X, y = mle(dataset_name, target_model, task, sampled_number, without_wne=False, k=k)
+                    X, y = mle(dataset_name, target_model, task, sampled_number=10, without_wne=False, k=1, s=0, times=200, print_iter=100)
+                    #X, y = mle(dataset_name, target_model, task, sampled_number, without_wne=False, k=k)
                 elif m == 'mle_w':
                     X, y = mle(dataset_name, target_model, task, sampled_number, without_wne=True, k=k)
                 elif m == 'mle_s':
@@ -251,11 +319,14 @@ def main():
                     X, y = b_opt(dataset_name, target_model, task, k=k)
                 Xs.append(X)
                 ys.append(y)
+                Ts.append(time.time()-t_b)
             Xs = np.array(Xs)
             ys = np.array(ys)
-            print(Xs, ys)
-            save_filename = 'result/{}/{}_{}_{}.npz'.format(dataset_name, m, target_model, k)
-            np.savez(save_filename, X=Xs, y=ys)
+            Ts = np.array(Ts)
+            print(Xs, ys, Ts)
+            save_filename = 'result/{}/{}_{}_{}_100.npz'.format(dataset_name, m, target_model, k)
+            np.savez(save_filename, X=Xs, y=ys, T=Ts)
+    """
 
 if __name__ == '__main__':
     main()

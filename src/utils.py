@@ -15,6 +15,10 @@ def rand(size, a, b, decimals=4):
         return np.around(res, decimals=decimals)
     return res
 
+def softmax(x):
+    e_x = np.exp(x - np.max(x))
+    return e_x / e_x.sum()
+
 def split_network(G, N):
     sc = SpectralClustering(N, affinity='precomputed')
     return sc.fit_predict(nx.adjacency_matrix(G))
@@ -63,11 +67,11 @@ def load_graph(edgelist_filename, label_name=None):
     print("load graph", G.number_of_nodes(), G.number_of_edges())
     return G
 
-def run_target_model(method, input_filename, output_dir, embedding_test_dir, **kargs):
+def run_target_model(method, input_filename, output_dir, embedding_test_dir, debug=True, **kargs):
     sys.path.append(embedding_test_dir)
     from src.baseline import baseline
     with cd(embedding_test_dir):
-        baseline(method, None, kargs['emd_size'], input_filename, output_dir, **kargs)
+        baseline(method, None, kargs['emd_size'], input_filename, output_dir, debug=debug, **kargs)
 
 def run_test(task, dataset_name, models, labels, save_filename, embedding_test_dir):
     sys.path.append(embedding_test_dir)
