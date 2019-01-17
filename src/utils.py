@@ -92,7 +92,10 @@ def get_names(method, **args):
     if method == 'node2vec':
         kargs = args
         embedding_filename = os.path.join("{}_{:d}_{:d}_{:d}_{:d}_{:.4f}_{:.4f}".format(method, kargs['emd_size'], kargs['num-walks'], kargs['walk-length'], kargs['window-size'], kargs['p'], kargs['q']))
-        return embedding_filename
+    elif method == 'deepwalk':
+        kargs = args
+        embedding_filename = os.path.join("{}_{:d}_{:d}_{:d}_{:d}".format(method, kargs['emd_size'], kargs['number-walks'], kargs['walk-length'], kargs['window-size']))
+    return embedding_filename
 
 def random_with_bound_type(bound, type_):
     res = []
@@ -183,7 +186,11 @@ class Params(object):
             self.arg_names = ['num-walks', 'walk-length', 'window-size', 'p', 'q']
             self.type_ = [int, int, int, float, float]
             self.bound = [(2, 20), (2, 80), (2, 10), (0.0001, 2), (0.0001, 2)]
-            self.ind = dict(zip(self.arg_names, range(len(self.arg_names))))
+        elif method == 'deepwalk':
+            self.arg_names = ['number-walks', 'walk-length', 'window-size']
+            self.type_ = [int, int, int]
+            self.bound = [(2, 20), (2, 80), (2, 20)]
+        self.ind = dict(zip(self.arg_names, range(len(self.arg_names))))
 
     def get_type(self, ps=None):
         if ps is None:

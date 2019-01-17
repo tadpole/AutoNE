@@ -137,8 +137,8 @@ def _get_mle_result(gp, dataset_name, target_model, task, without_wne, params, p
 def mle(dataset_name, target_model, task='classification', sampled_number=10, without_wne=False, k=16, s=0, times=100, print_iter=10, debug=False):
     X = []
     y = []
-    ps = ['num-walks', 'walk-length', 'window-size', 'p', 'q']
     params = utils.Params(target_model)
+    ps = params.arg_names
     total_t = 0.0
     info = []
     for t in range(times):
@@ -167,12 +167,12 @@ def mle(dataset_name, target_model, task='classification', sampled_number=10, wi
     gp.fit(X, y)
     X_b_t, res_b_t = _get_mle_result(gp, dataset_name, target_model, task, without_wne, params, ps, s, X, y)
     if debug:
-        return X_b_t, res_b_t, debug
+        return X_b_t, res_b_t, info
     return X_b_t, res_b_t
 
 def mle_m(dataset_name, target_model, task='classification', sampled_number=10,  k=16):
-    ps = ['num-walks', 'walk-length', 'window-size', 'p', 'q']
     params = utils.Params(target_model)
+    ps = params.arg_names
     info = []
     gps = []
     wnes = []
@@ -230,7 +230,7 @@ def random_search(dataset_name, target_model, task, k=16, debug=False):
     return X[ind], y[ind]
 
 
-def b_opt(dataset_name, target_model, task, k=16):
+def b_opt(dataset_name, target_model, task, k=16, debug=False, inits=None):
     ps = ['num-walks', 'walk-length', 'window-size', 'p', 'q']
     params = utils.Params(target_model)
     p_bound = dict(zip(ps, params.get_bound(ps)))
@@ -244,10 +244,18 @@ def b_opt(dataset_name, target_model, task, k=16):
             f=black_box_function,
             pbounds=p_bound,
             verbose=2)
+    if inits is not None:
+        for d in inits:
+            dd = dict(zip(ps, d))
+            target = black_box_function(**dd)
+            print(dd, target)
+            opt.register(params=dd, target=target)
     opt.maximize(init_points=0, n_iter=k)
     X = [opt.max['params'][p] for p in ps]
     y = opt.max['target']
-    print(opt.max)
+    if debug:
+        info = [res['target'] for res in opt.res]
+        return X, y, info
     return X, y
 
 def main():
@@ -256,23 +264,26 @@ def main():
     #np.random.seed(seed)
 
     dataset_name = 'citeseer'
-    target_model = 'node2vec'
-    task = 'link_predict'
+    target_model = 'deepwalk'
+    task = 'classification'#'link_predict'
     dataset_path = 'data/{}/graph.edgelist'.format(dataset_name)
     label_path = 'data/{}/label.txt'.format(dataset_name)
+    with_test = False
     if task == 'link_predict':
         dataset_name = dataset_name+'_0.8'
-        label_path=None
+        label_path = None
+        with_test = True
     #G = utils.load_graph(dataset_path, label_path)
     #sampled_number = int(np.sqrt(G.number_of_nodes()))
-    #sample_graph(G, 'data/{}/sampled'.format(dataset_name), times=sampled_number, with_test=True)
+    #sample_graph(G, 'data/{}/sampled'.format(dataset_name), times=sampled_number, with_test=False)
     ms = ['mle', 'random_search', 'b_opt', 'mle_w', 'mle_s']
     ms = ['mle', 'mle_m', 'random_search', 'b_opt']
-    ks = 5
+    ms = ['random_search', 'b_opt']
+    ms = ['mle']
+    ks = 1
 
     for m in ms:
         res = []
-        save_filename = 'result/{}/res_{}_{}.npz'.format(dataset_name, m, target_model)
         for i in range(ks):
             info = []
             if m == 'mle':
@@ -287,46 +298,19 @@ def main():
                 X, y, info = random_search(dataset_name, target_model, task, k=10, debug=True)
             elif m == 'b_opt':
                 b_t = time.time()
-                X, y = b_opt(dataset_name, target_model, task, k=10)
+                X, y, info_t = b_opt(dataset_name, target_model, task, k=10, debug=True)
                 e_t = time.time()
-                info.append([y, e_t-b_t])
+                info = [[j, (e_t-b_t)/len(info_t)*(i+1)] for i, j in enumerate(info_t)]
+            elif m == 'b_opt_o':
+                b_t = time.time()
+                data = np.loadtxt('temp.txt')
+                X, y, info_t = b_opt(dataset_name, target_model, task, k=10, debug=True)
+                e_t = time.time()
+                info = [[j, (e_t-b_t)/len(info_t)*(i+1)] for i, j in enumerate(info_t)]
             res.append(info)
         print(m, res)
+        save_filename = 'result/{}/res_{}_{}.npz'.format(dataset_name, m, target_model)
         np.savez(save_filename, res=res)
-
-    #X, y = random_search(dataset_name, target_model, task, k=10)
-    #b_t = time.time()
-    #X, y = b_opt(dataset_name, target_model, task, k=10)
-    #print("time: {:.4f}".format(time.time()-b_t))
-
-    """
-    for m in ms:
-        for k in range(1, ks+1):
-            Xs, ys = [], []
-            Ts = []
-            t_b = time.time()
-            for i in range(times):
-                if m == 'mle':
-                    X, y = mle(dataset_name, target_model, task, sampled_number=10, without_wne=False, k=1, s=0, times=200, print_iter=100)
-                    #X, y = mle(dataset_name, target_model, task, sampled_number, without_wne=False, k=k)
-                elif m == 'mle_w':
-                    X, y = mle(dataset_name, target_model, task, sampled_number, without_wne=True, k=k)
-                elif m == 'mle_s':
-                    X, y = mle(dataset_name, target_model, task, sampled_number, without_wne=False, k=k, s=1)
-                elif m == 'random_search':
-                    X, y = random_search(dataset_name, target_model, task, k=k)
-                elif m == 'b_opt':
-                    X, y = b_opt(dataset_name, target_model, task, k=k)
-                Xs.append(X)
-                ys.append(y)
-                Ts.append(time.time()-t_b)
-            Xs = np.array(Xs)
-            ys = np.array(ys)
-            Ts = np.array(Ts)
-            print(Xs, ys, Ts)
-            save_filename = 'result/{}/{}_{}_{}_100.npz'.format(dataset_name, m, target_model, k)
-            np.savez(save_filename, X=Xs, y=ys, T=Ts)
-    """
 
 if __name__ == '__main__':
     main()
