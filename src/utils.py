@@ -23,30 +23,58 @@ def split_network(G, N):
     sc = SpectralClustering(N, affinity='precomputed')
     return sc.fit_predict(nx.adjacency_matrix(G))
 
-def random_walk_induced_graph_sampling(G, N, T=100, growth_size=2):
+def random_walk_induced_graph_sampling(G, N, T=100, growth_size=2, n_starts=5):
     # Refer to https://github.com/Ashish7129/Graph-Sampling
     G = nx.convert_node_labels_to_integers(G, 0, 'default', True)
     for n, data in G.nodes(data=True):
         G.node[n]['id'] = n
     n_node = G.number_of_nodes()
-    temp_node = random.randint(0, n_node-1)
-    sampled_nodes = set([G.node[temp_node]['id']])
-    iter_ = 1
-    nodes_before_t_iter = 0
-    curr_node = temp_node
-    while len(sampled_nodes) != N:
-        edges = [n for n in G.neighbors(curr_node)]
-        index_of_edge = random.randint(0, len(edges)-1)
-        chosen_node = edges[index_of_edge]
-        sampled_nodes.add(G.node[chosen_node]['id'])
-        curr_node = chosen_node
-        iter_ += 1
-        if iter_ % T == 0:
-            if (len(sampled_nodes)-nodes_before_t_iter < growth_size):
-                curr_node = random.randint(0, n_node-1)
-            nodes_before_t_iter = len(sampled_nodes)
+    labels = nx.get_node_attributes(G, 'label')
+    candidate_set = set()
+    if len(labels) > 0:
+        candidate_set_value = set()
+        l = np.random.permutation(list(labels.keys()))
+        for i in l:
+            for j in labels[i]:
+                if j not in candidate_set_value:
+                    candidate_set.add(i)
+                    candidate_set_value.add(j)
+    while len(candidate_set) < n_starts:
+        candidate_set.add(np.random.random_integers(n_node))
+    candidate_set = list(candidate_set)[:n_starts]
+    sampled_nodes = set()
+    for i, temp_node in enumerate(candidate_set):
+        sampled_nodes.add(G.node[temp_node]['id'])
+        iter_ = 1
+        nodes_before_t_iter = 0
+        curr_node = temp_node
+        N_t = int(N/n_starts)*(i+1)
+        while len(sampled_nodes) < N_t:
+            edges = [n for n in G.neighbors(curr_node)]
+            index_of_edge = random.randint(0, len(edges)-1)
+            chosen_node = edges[index_of_edge]
+            sampled_nodes.add(G.node[chosen_node]['id'])
+            curr_node = chosen_node
+            iter_ += 1
+            if iter_ % T == 0:
+                if (len(sampled_nodes)-nodes_before_t_iter < growth_size):
+                    curr_node = random.randint(0, n_node-1)
+                nodes_before_t_iter = len(sampled_nodes)
     sampled_graph = G.subgraph(sampled_nodes)
     return sampled_graph
+
+def generate_mask(dataset_path, radio=0.8):
+    G = load_graph(os.path.join(dataset_path, 'graph.edgelist'), os.path.join(dataset_path, 'label.txt'))
+    labels = nx.get_node_attributes(G, 'label')
+    l = np.random.permutation(list(labels.keys()))
+    n = int(radio*len(l))
+    with open(os.path.join(dataset_path, 'label_mask_train'), 'w') as f:
+        for i in l[:n]:
+            print(i, file=f)
+    with open(os.path.join(dataset_path, 'label_mask_test'), 'w') as f:
+        for i in l[n:]:
+            print(i, file=f)
+
 
 def write_with_create(path):
     dirpath = os.path.dirname(path)
@@ -89,12 +117,13 @@ def run_test(task, dataset_name, models, labels, save_filename, embedding_test_d
         test(task, evalution, dataset_name, models, save_filename=save_filename, **args)
 
 def get_names(method, **args):
+    kargs = args
     if method == 'node2vec':
-        kargs = args
         embedding_filename = os.path.join("{}_{:d}_{:d}_{:d}_{:d}_{:.4f}_{:.4f}".format(method, kargs['emd_size'], kargs['num-walks'], kargs['walk-length'], kargs['window-size'], kargs['p'], kargs['q']))
     elif method == 'deepwalk':
-        kargs = args
         embedding_filename = os.path.join("{}_{:d}_{:d}_{:d}_{:d}".format(method, kargs['emd_size'], kargs['number-walks'], kargs['walk-length'], kargs['window-size']))
+    elif method == 'gcn':
+        embedding_filename = os.path.join("{}_{:d}_{:d}_{:.4f}".format(method, kargs['epochs'], kargs['hidden1'], kargs['learning_rate']))
     return embedding_filename
 
 def random_with_bound_type(bound, type_):
@@ -181,6 +210,7 @@ class RandomState(object):
 
 class Params(object):
     def __init__(self, method):
+        eps = 1e-6
         self.method = method
         if method == 'node2vec':
             self.arg_names = ['num-walks', 'walk-length', 'window-size', 'p', 'q']
@@ -190,6 +220,10 @@ class Params(object):
             self.arg_names = ['number-walks', 'walk-length', 'window-size']
             self.type_ = [int, int, int]
             self.bound = [(2, 20), (2, 80), (2, 20)]
+        elif method == 'gcn':
+            self.arg_names = ['epochs', 'hidden1', 'learning_rate']
+            self.type_ = [int, int, float]
+            self.bound = [(10, 300), (2, 64), (0.0001, 0.1)]
         self.ind = dict(zip(self.arg_names, range(len(self.arg_names))))
 
     def get_type(self, ps=None):
@@ -214,7 +248,18 @@ class Params(object):
                 res.append(round(x, 4))
         return res
 
-    def random_args(self, ps=None, emd_size=128, known_args={}):
+    def convert_dict(self, d, ps=None):
+        for p in ps:
+            x = np.clip(d[p], self.bound[self.ind[p]][0], self.bound[self.ind[p]][1])
+            t = self.type_[self.ind[p]]
+            if t == int:
+                x = int(round(x, 0))
+            elif t == float:
+                x = round(x, 4)
+            d[p] = x
+        return d
+
+    def random_args(self, ps=None, emd_size=64, known_args={}):
         if ps is None:
             ps = self.arg_names
         type_ = self.get_type(ps)
@@ -223,7 +268,8 @@ class Params(object):
         d = dict(zip(ps, res))
         for arg in known_args:
             d[arg] = known_args[arg]
-        d['emd_size'] = emd_size
+        if self.method != 'gcn':
+            d['emd_size'] = emd_size
         return d
 
 def analysis_result(data_dir):
@@ -235,5 +281,14 @@ def analysis_result(data_dir):
     for k, v in collections.Counter(d).most_common():
         print(k*1.0/scale, v, "{:.2f}".format(v*1.0/fs.shape[0]))
 
+def check_label(data_dir):
+    fn = os.path.join(data_dir, 'label.txt')
+    d = np.loadtxt(fn, dtype=int)
+    c = collections.Counter(d[:, 1])
+    for k, v in c.most_common():
+        print(k, v)
+
 if __name__ == '__main__':
-    analysis_result('result/BlogCatalog/cf/')
+    #analysis_result('result/BlogCatalog/cf/')
+    #check_label('data/citeseer/sampled/s1/')
+    generate_mask('data/BlogCatalog/')
