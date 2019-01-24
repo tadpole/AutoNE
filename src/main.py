@@ -181,9 +181,9 @@ def mle(dataset_name, target_model, task='classification', sampled_number=10, wi
         if res_t < res_temp:
             res_t = res_temp
             X_t = X_temp
-        info.append([res_temp, total_t])
         e_t = time.time()
         total_t += e_t-b_t
+        info.append([res_temp, total_t])
         print('iters: {}/{}, params: {}, res: {}, time: {:.4f}s'.format(t, sampled_number, X_temp, res_temp, total_t))
     if debug:
         return X_t, res_t, info
@@ -228,6 +228,54 @@ def mle_t(dataset_name, target_model, task='classification', sampled_number=10, 
         info.append([res_temp, total_t])
         e_t = time.time()
         total_t += e_t-b_t
+        print('iters: {}/{}, params: {}, res: {}, time: {:.4f}s'.format(t, sampled_number, X_temp, res_temp, total_t))
+    if debug:
+        return X_t, res_t, info
+    return X_t, res_t
+
+def mle_k(dataset_name, target_model, task='classification', sampled_number=10, without_wne=False, k=16, s=0, print_iter=10, debug=False):
+    X = []
+    y = []
+    params = utils.Params(target_model)
+    ps = params.arg_names
+    total_t = 0.0
+    info = []
+    X_t, res_t = None, -1.0
+    if without_wne:
+        gp = utils.GaussianProcessRegressor()
+    else:
+        K = utils.K(len(ps))
+        gp = utils.GaussianProcessRegressor(K)
+    for t in range(sampled_number):
+        b_t = time.time()
+        i = t
+        wne = get_wne(dataset_name, 'sampled/s{}'.format(i), cache=True)
+        for v in range(k):
+            kargs = params.random_args(ps)
+            res = get_result(dataset_name, target_model, task, kargs, 'sampled/s{}'.format(i))
+            if without_wne:
+                X.append([kargs[p] for p in ps])
+            else:
+                X.append(np.hstack(([kargs[p] for p in ps], wne)))
+            if debug:
+                print('sample {}, {}/{}, kargs: {}, res: {}, time: {:.4f}s'.format(t, v, k, [kargs[p] for p in ps], res, time.time()-b_t))
+            y.append(res)
+
+    for t in range(sampled_number):
+        b_t = time.time()
+        gp.fit(np.vstack(X), y)
+        X_temp, res_temp = _get_mle_result(gp, dataset_name, target_model, task, without_wne, params, ps, s, X, y)
+        if without_wne:
+            X.append(X_temp)
+        else:
+            X.append(np.hstack((X_temp, wne)))
+        y.append(res_temp)
+        if res_t < res_temp:
+            res_t = res_temp
+            X_t = X_temp
+        e_t = time.time()
+        total_t += e_t-b_t
+        info.append([res_temp, total_t])
         print('iters: {}/{}, params: {}, res: {}, time: {:.4f}s'.format(t, sampled_number, X_temp, res_temp, total_t))
     if debug:
         return X_t, res_t, info
@@ -382,7 +430,7 @@ def main():
 
     dataset_name = 'BlogCatalog'
     target_model = 'deepwalk'
-    task = 'classification'
+    task = 'link_predict' #'classification'
     dataset_path = 'data/{}/graph.edgelist'.format(dataset_name)
     label_path = 'data/{}/label.txt'.format(dataset_name)
     with_test = False
@@ -396,7 +444,8 @@ def main():
     ms = ['mle', 'random_search', 'b_opt', 'mle_w', 'mle_s']
     ms = ['mle', 'mle_m', 'random_search', 'b_opt']
     ms = ['random_search', 'b_opt']
-    ms = ['mle_t']
+    ms = ['mle_k', 'mle', 'random_search', 'b_opt', 'mle_t']
+    ms = ['mle_k', 'mle_t']
     ks = 5
     #test(dataset_name, target_model, task)
     sampled_dir = ''
@@ -405,10 +454,9 @@ def main():
         res = []
         for i in range(ks):
             info = []
-            if m in 'mle':
-                X, y, info = mle(dataset_name, target_model, task, sampled_number=5, without_wne=False, k=5, s=0, debug=True)
-            elif m == 'mle_t':
-                X, y, info = mle_t(dataset_name, target_model, task, sampled_number=5, without_wne=False, k=5, s=0, debug=True)
+            if m in ['mle', 'mle_t', 'mle_k']:
+                me = eval(m)
+                X, y, info = me(dataset_name, target_model, task, sampled_number=5, without_wne=False, k=5, s=0, debug=True)
             elif m == 'mle_m':
                 for k in [3, 5, 10, 15, 20]:
                     b_t = time.time()

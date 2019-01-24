@@ -179,10 +179,30 @@ class cd:
     def __exit__(self, etype, value, traceback):
         os.chdir(self.savedPath)
 
+class K(gaussian_process.kernels.Kernel):
+    def __init__(self, n=3):
+        self.n = n
+        self.kernels = [gaussian_process.kernels.Matern(nu=2.5), gaussian_process.kernels.Matern(nu=2.5)]
+
+    def __call__(self, X, Y=None):
+        n = self.n
+        if Y is None:
+            Y = X
+        return self.kernels[0](X[:, :n], Y[:, :n])*self.kernels[1](X[:, n:], Y[:, n:])
+
+    def diag(self, X):
+        n = self.n
+        return self.kernels[0].diag(X[:, :n])*self.kernels[1].diag(X[:, n:])
+
+    def is_stationary(self):
+        return np.all([kernel.is_stationary() for kernel in self.kernels])
+
 class GaussianProcessRegressor(object):
-    def __init__(self):
+    def __init__(self, kernel=None):
+        if kernel is not None:
+            kernel = gaussian_process.kernels.Matern(nu=2.5)
         self.gp = gaussian_process.GaussianProcessRegressor(
-                kernel=gaussian_process.kernels.Matern(nu=2.5),
+                kernel=kernel,
                 alpha=1e-6,
                 normalize_y=True,
                 n_restarts_optimizer=10)
