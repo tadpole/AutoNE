@@ -66,7 +66,7 @@ def sample_graph(G, output_dir, s_n, times=10, with_test=False, radio=0.8):
                     print(i, j, file=f)
 
 
-def get_result(dataset_name, target_model, task, kargs, sampled_dir='', debug=False, cache=True):
+def get_result(dataset_name, target_model, task, kargs, sampled_dir='', debug=True, cache=True):
     rs = utils.RandomState()
     rs.save_state()
     rs.set_seed(0)
@@ -197,8 +197,8 @@ def mle_t(dataset_name, target_model, task='classification', sampled_number=10, 
     total_t = 0.0
     info = []
     X_t, res_t = None, -1.0
+    b_t = time.time()
     for t in range(sampled_number):
-        b_t = time.time()
         i = t
         wne = get_wne(dataset_name, 'sampled/s{}'.format(i), cache=True)
         for v in range(k):
@@ -211,12 +211,14 @@ def mle_t(dataset_name, target_model, task='classification', sampled_number=10, 
             if debug:
                 print('sample {}, {}/{}, kargs: {}, res: {}, time: {:.4f}s'.format(t, v, k, [kargs[p] for p in ps], res, time.time()-b_t))
             y.append(res)
+    e_t = time.time()
+    total_t += e_t-b_t
 
     gp = utils.GaussianProcessRegressor()
-    for t in range(sampled_number):
+    for t in range(s):
         b_t = time.time()
         gp.fit(np.vstack(X), y)
-        X_temp, res_temp = _get_mle_result(gp, dataset_name, target_model, task, without_wne, params, ps, s, X, y)
+        X_temp, res_temp = _get_mle_result(gp, dataset_name, target_model, task, without_wne, params, ps, 0, X, y)
         if without_wne:
             X.append(X_temp)
         else:
@@ -261,10 +263,10 @@ def mle_k(dataset_name, target_model, task='classification', sampled_number=10, 
                 print('sample {}, {}/{}, kargs: {}, res: {}, time: {:.4f}s'.format(t, v, k, [kargs[p] for p in ps], res, time.time()-b_t))
             y.append(res)
 
-    for t in range(sampled_number):
+    for t in range(s):
         b_t = time.time()
         gp.fit(np.vstack(X), y)
-        X_temp, res_temp = _get_mle_result(gp, dataset_name, target_model, task, without_wne, params, ps, s, X, y)
+        X_temp, res_temp = _get_mle_result(gp, dataset_name, target_model, task, without_wne, params, ps, 0, X, y)
         if without_wne:
             X.append(X_temp)
         else:
@@ -424,13 +426,13 @@ def test_1(dataset_name, target_model, task):
     return 0
 
 def main():
-    seed = None
+    seed = 0#None
     random.seed(seed)
     np.random.seed(seed)
 
-    dataset_name = 'BlogCatalog'
+    dataset_name = 'Flickr'
     target_model = 'deepwalk'
-    task = 'link_predict' #'classification'
+    task = 'link_predict'
     dataset_path = 'data/{}/graph.edgelist'.format(dataset_name)
     label_path = 'data/{}/label.txt'.format(dataset_name)
     with_test = False
@@ -439,13 +441,12 @@ def main():
         label_path = None
         with_test = True
     #G = utils.load_graph(dataset_path, label_path)
-    #sampled_number = int(np.sqrt(G.number_of_nodes()))
-    #sample_graph(G, 'data/{}/sampled'.format(dataset_name), s_n=1000, times=sampled_number, with_test=False)
+    #sampled_number = 10#int(np.sqrt(G.number_of_nodes()))
+    #sample_graph(G, 'data/{}/sampled'.format(dataset_name), s_n=1000, times=sampled_number, with_test=with_test)
     ms = ['mle', 'random_search', 'b_opt', 'mle_w', 'mle_s']
     ms = ['mle', 'mle_m', 'random_search', 'b_opt']
-    ms = ['random_search', 'b_opt']
-    ms = ['mle_k', 'mle', 'random_search', 'b_opt', 'mle_t']
-    ms = ['mle_k', 'mle_t']
+    #ms = ['random_search', 'b_opt']
+    #ms = ['mle_k', 'mle_w', 'random_search', 'b_opt', 'mle_t', 'mle']
     ks = 5
     #test(dataset_name, target_model, task)
     sampled_dir = ''
@@ -456,7 +457,9 @@ def main():
             info = []
             if m in ['mle', 'mle_t', 'mle_k']:
                 me = eval(m)
-                X, y, info = me(dataset_name, target_model, task, sampled_number=5, without_wne=False, k=5, s=0, debug=True)
+                X, y, info = me(dataset_name, target_model, task, sampled_number=5, without_wne=False, k=10, s=0, debug=True)
+            if m == 'mle_w':
+                X, y, info = mle_k(dataset_name, target_model, task, sampled_number=5, without_wne=True, k=10, s=0, debug=True)
             elif m == 'mle_m':
                 for k in [3, 5, 10, 15, 20]:
                     b_t = time.time()

@@ -112,6 +112,7 @@ def run_test(task, dataset_name, models, labels, save_filename, embedding_test_d
     elif task == 'link_predict':
         evalution = 'AUC'
         args['data_dir'] = labels
+    args['sampling_mapping'] = {'Flickr': 1000000}
 
     with cd(embedding_test_dir):
         test(task, evalution, dataset_name, models, save_filename=save_filename, **args)
@@ -199,7 +200,7 @@ class K(gaussian_process.kernels.Kernel):
 
 class GaussianProcessRegressor(object):
     def __init__(self, kernel=None):
-        if kernel is not None:
+        if kernel is None:
             kernel = gaussian_process.kernels.Matern(nu=2.5)
         self.gp = gaussian_process.GaussianProcessRegressor(
                 kernel=kernel,
