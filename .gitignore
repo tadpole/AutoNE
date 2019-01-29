@@ -1,6 +1,7 @@
 data/
 result/
 embeddings/
+logs/
 
 *.pyc
 *.swp

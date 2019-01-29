@@ -14,6 +14,8 @@ from bayes_opt import BayesianOptimization
 import utils
 
 embedding_test_dir = 'embedding_test'
+debug = False
+cache = True
 
 def sample_graph(G, output_dir, s_n, times=10, with_test=False, radio=0.8):
     if s_n is None:
@@ -66,7 +68,7 @@ def sample_graph(G, output_dir, s_n, times=10, with_test=False, radio=0.8):
                     print(i, j, file=f)
 
 
-def get_result(dataset_name, target_model, task, kargs, sampled_dir='', debug=True, cache=True):
+def get_result(dataset_name, target_model, task, kargs, sampled_dir='', debug=debug, cache=cache):
     rs = utils.RandomState()
     rs.save_state()
     rs.set_seed(0)
@@ -278,7 +280,7 @@ def mle_k(dataset_name, target_model, task='classification', sampled_number=10, 
         e_t = time.time()
         total_t += e_t-b_t
         info.append([res_temp, total_t])
-        print('iters: {}/{}, params: {}, res: {}, time: {:.4f}s'.format(t, sampled_number, X_temp, res_temp, total_t))
+        print('iters: {}/{}, params: {}, res: {}, time: {:.4f}s'.format(t, s, X_temp, res_temp, total_t))
     if debug:
         return X_t, res_t, info
     return X_t, res_t
@@ -356,6 +358,8 @@ def b_opt(dataset_name, target_model, task, k=16, debug=False, n_inits=0, inits=
         args = params.convert(x, ps)
         kargs = dict(zip(ps, args))
         kargs['emd_size'] = 64
+        if target_model == 'AROPE':
+            kargs['order'] = 3
         return get_result(dataset_name, target_model, task, kargs, sampled_dir)
     opt = BayesianOptimization(
             f=black_box_function,
@@ -425,14 +429,20 @@ def test_1(dataset_name, target_model, task):
     print(i, j, [temp_args[p] for p in ps], res)
     return 0
 
-def main():
-    seed = 0#None
+def main(args):
+    seed = None
     random.seed(seed)
     np.random.seed(seed)
-
-    dataset_name = 'Flickr'
-    target_model = 'deepwalk'
-    task = 'link_predict'
+    if len(args) == 0:
+        dataset_name = 'BlogCatalog'
+        target_model = 'AROPE'
+        task = 'link_predict'
+        ms = ['mle_k', 'random_search', 'b_opt']
+    else:
+        dataset_name = args[0]
+        target_model = args[1]
+        task = args[2]
+        ms = args[3:]
     dataset_path = 'data/{}/graph.edgelist'.format(dataset_name)
     label_path = 'data/{}/label.txt'.format(dataset_name)
     with_test = False
@@ -442,11 +452,7 @@ def main():
         with_test = True
     #G = utils.load_graph(dataset_path, label_path)
     #sampled_number = 10#int(np.sqrt(G.number_of_nodes()))
-    #sample_graph(G, 'data/{}/sampled'.format(dataset_name), s_n=1000, times=sampled_number, with_test=with_test)
-    ms = ['mle', 'random_search', 'b_opt', 'mle_w', 'mle_s']
-    ms = ['mle', 'mle_m', 'random_search', 'b_opt']
-    #ms = ['random_search', 'b_opt']
-    #ms = ['mle_k', 'mle_w', 'random_search', 'b_opt', 'mle_t', 'mle']
+    #sample_graph(G, 'data/{}/sampled'.format(dataset_name), s_n=500, times=20, with_test=with_test)
     ks = 5
     #test(dataset_name, target_model, task)
     sampled_dir = ''
@@ -455,10 +461,12 @@ def main():
         res = []
         for i in range(ks):
             info = []
-            if m in ['mle', 'mle_t', 'mle_k']:
+            if m in ['mle', 'mle_t']:
                 me = eval(m)
                 X, y, info = me(dataset_name, target_model, task, sampled_number=5, without_wne=False, k=10, s=0, debug=True)
-            if m == 'mle_w':
+            elif m == 'mle_k':
+                X, y, info = mle_k(dataset_name, target_model, task, sampled_number=5, without_wne=False, k=5, s=10, debug=True)
+            elif m == 'mle_w':
                 X, y, info = mle_k(dataset_name, target_model, task, sampled_number=5, without_wne=True, k=10, s=0, debug=True)
             elif m == 'mle_m':
                 for k in [3, 5, 10, 15, 20]:
@@ -489,4 +497,4 @@ def main():
         np.savez(save_filename, res=res)
 
 if __name__ == '__main__':
-    main()
+    main(sys.argv[1:])

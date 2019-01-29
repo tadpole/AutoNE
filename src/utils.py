@@ -8,6 +8,7 @@ import numpy as np
 from sklearn.cluster import SpectralClustering
 from sklearn import gaussian_process
 from scipy.optimize import minimize
+from bayes_opt import BayesianOptimization
 
 def rand(size, a, b, decimals=4):
     res = np.random.random_sample(size)*(b-a)+a
@@ -112,7 +113,7 @@ def run_test(task, dataset_name, models, labels, save_filename, embedding_test_d
     elif task == 'link_predict':
         evalution = 'AUC'
         args['data_dir'] = labels
-    args['sampling_mapping'] = {'Flickr': 1000000}
+    args['sampling_mapping'] = {'Flickr': 100000}
 
     with cd(embedding_test_dir):
         test(task, evalution, dataset_name, models, save_filename=save_filename, **args)
@@ -125,6 +126,8 @@ def get_names(method, **args):
         embedding_filename = os.path.join("{}_{:d}_{:d}_{:d}_{:d}".format(method, kargs['emd_size'], kargs['number-walks'], kargs['walk-length'], kargs['window-size']))
     elif method == 'gcn':
         embedding_filename = os.path.join("{}_{:d}_{:d}_{:.4f}".format(method, kargs['epochs'], kargs['hidden1'], kargs['learning_rate']))
+    elif method == 'AROPE':
+        embedding_filename = os.path.join("{}_{}_".format(method, kargs['emd_size'])+'_'.join(['{:.4f}'.format(kargs['w{}'.format(i+1)]) for i in range(kargs['order'])]))
     return embedding_filename
 
 def random_with_bound_type(bound, type_):
@@ -152,11 +155,13 @@ def find_b_opt_max(gp, ps, p_bound, p_type, w=None, n_warmup=100000, n_iter=100)
     ind = np.argmax(y)
     x_max, y_max = X[ind][:len(ps)], y[ind]
     temp_w = [] if w is None else w
-    def temp_f(x):
-        return gp.predict([list(x)+list(temp_w)])[0]
+    def utility(x, kappa=2.576):
+        mean, std = gp.predict([list(x)+list(temp_w)], return_std=True)
+        #print("######### mean, std ", x, mean, std)
+        return (mean + kappa*std)[0]
     for i in range(n_iter):
         x_try = random_with_bound_type(p_bound, p_type)
-        res = minimize(lambda x: -gp.predict([list(x)+list(temp_w)])[0],
+        res = minimize(lambda x: -utility(x),
                         x_try,
                         bounds=p_bound,
                         method='L-BFGS-B')
@@ -214,6 +219,10 @@ class GaussianProcessRegressor(object):
     def predict(self, ps, p_bound, type_, w=None):
         return find_b_opt_max(self.gp, ps, p_bound, type_, w)
 
+class meta_learner(BayesianOptimization):
+    def set_kernel(kernel):
+        self._gp.kernel = kernel
+
 class RandomState(object):
     def __init__(self):
         self.state = None
@@ -245,6 +254,11 @@ class Params(object):
             self.arg_names = ['epochs', 'hidden1', 'learning_rate']
             self.type_ = [int, int, float]
             self.bound = [(10, 300), (2, 64), (0.0001, 0.1)]
+        elif method == 'AROPE':
+            n = 3
+            self.arg_names = ['w{}'.format(i+1) for i in range(n)]
+            self.type_ = [float for _ in range(n)]
+            self.bound = [(0, 3) for _ in range(n)]
         self.ind = dict(zip(self.arg_names, range(len(self.arg_names))))
 
     def get_type(self, ps=None):
@@ -291,6 +305,8 @@ class Params(object):
             d[arg] = known_args[arg]
         if self.method != 'gcn':
             d['emd_size'] = emd_size
+        if self.method == 'AROPE':
+            d['order'] = 3
         return d
 
 def analysis_result(data_dir):
