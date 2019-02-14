@@ -2,6 +2,8 @@ import random
 import os, sys
 import collections
 import itertools
+import pickle as pkl
+import scipy.sparse as sp
 
 import networkx as nx
 import numpy as np
@@ -113,7 +115,7 @@ def run_test(task, dataset_name, models, labels, save_filename, embedding_test_d
     elif task == 'link_predict':
         evalution = 'AUC'
         args['data_dir'] = labels
-    args['sampling_mapping'] = {'Flickr': 100000}
+    args['sampling_mapping'] = {'Flickr': 100000, 'wiki': 1000000}
 
     with cd(embedding_test_dir):
         test(task, evalution, dataset_name, models, save_filename=save_filename, **args)
@@ -125,7 +127,8 @@ def get_names(method, **args):
     elif method == 'deepwalk':
         embedding_filename = os.path.join("{}_{:d}_{:d}_{:d}_{:d}".format(method, kargs['emd_size'], kargs['number-walks'], kargs['walk-length'], kargs['window-size']))
     elif method == 'gcn':
-        embedding_filename = os.path.join("{}_{:d}_{:d}_{:.4f}".format(method, kargs['epochs'], kargs['hidden1'], kargs['learning_rate']))
+        #embedding_filename = os.path.join("{}_{:d}_{:d}_{:.4f}".format(method, kargs['epochs'], kargs['hidden1'], kargs['learning_rate']))
+        embedding_filename = os.path.join("{}_{:d}_{:d}_{:.4f}_{:.4f}_{:.4f}".format(method, kargs['epochs'], kargs['hidden1'], kargs['learning_rate'], kargs['dropout'], kargs['weight_decay']))
     elif method == 'AROPE':
         embedding_filename = os.path.join("{}_{}_".format(method, kargs['emd_size'])+'_'.join(['{:.4f}'.format(kargs['w{}'.format(i+1)]) for i in range(kargs['order'])]))
     return embedding_filename
@@ -251,9 +254,9 @@ class Params(object):
             self.type_ = [int, int, int]
             self.bound = [(2, 20), (2, 80), (2, 20)]
         elif method == 'gcn':
-            self.arg_names = ['epochs', 'hidden1', 'learning_rate']
-            self.type_ = [int, int, float]
-            self.bound = [(10, 300), (2, 64), (0.0001, 0.1)]
+            self.arg_names = ['epochs', 'hidden1', 'learning_rate', 'dropout', 'weight_decay']
+            self.type_ = [int, int, float, float, float]
+            self.bound = [(10, 300), (2, 64), (0.0001, 0.1), (0.1, 0.9), (1e-4, 100e-4)]
         elif method == 'AROPE':
             n = 3
             self.arg_names = ['w{}'.format(i+1) for i in range(n)]
@@ -325,7 +328,61 @@ def check_label(data_dir):
     for k, v in c.most_common():
         print(k, v)
 
+def convert_gcn_data(dataset_name, input_dir, output_dir):
+    def parse_index_file(filename):
+        """Parse index file."""
+        index = []
+        for line in open(filename):
+            index.append(int(line.strip()))
+        return index
+    names = ['x', 'y', 'tx', 'ty', 'allx', 'ally', 'graph']
+    objects = []
+    for i in range(len(names)):
+        with open(os.path.join(input_dir, "ind.{}.{}".format(dataset_name, names[i])), 'rb') as f:
+            if sys.version_info > (3, 0):
+                objects.append(pkl.load(f, encoding='latin1'))
+            else:
+                objects.append(pkl.load(f))
+
+    x, y, tx, ty, allx, ally, graph = tuple(objects)
+    test_idx_reorder = parse_index_file(os.path.join(input_dir, "ind.{}.test.index".format(dataset_name)))
+    test_idx_range = np.sort(test_idx_reorder)
+
+    if dataset_name == 'citeseer':
+        # Fix citeseer dataset (there are some isolated nodes in the graph)
+        # Find isolated nodes, add them as zero-vecs into the right position
+        test_idx_range_full = range(min(test_idx_reorder), max(test_idx_reorder)+1)
+        tx_extended = sp.lil_matrix((len(test_idx_range_full), x.shape[1]))
+        tx_extended[test_idx_range-min(test_idx_range), :] = tx
+        tx = tx_extended
+        ty_extended = np.zeros((len(test_idx_range_full), y.shape[1]))
+        ty_extended[test_idx_range-min(test_idx_range), :] = ty
+        ty = ty_extended
+
+    features = sp.vstack((allx, tx)).tolil()
+    features[test_idx_reorder, :] = features[test_idx_range, :]
+    G = nx.from_dict_of_lists(graph)
+    adj = nx.adjacency_matrix(G)
+
+    labels = np.vstack((ally, ty))
+    labels[test_idx_reorder, :] = labels[test_idx_range, :]
+    print(G.number_of_nodes(), G.number_of_edges())
+    with open('data/{}/label.txt'.format(dataset_name), 'w') as f:
+        for i in range(len(labels)):
+            assert sum(labels[i])>0
+            for j, k in enumerate(labels[i]):
+                if k == 1:
+                    print(i, j, file=f)
+
+    with open('data/{}/graph.edgelist'.format(dataset_name), 'w') as f:
+        for i, j in G.edges():
+            print(i, j, file=f)
+
+    sp.save_npz('data/{}/features.npz'.format(dataset_name), features.tocsr())
+
 if __name__ == '__main__':
     #analysis_result('result/BlogCatalog/cf/')
     #check_label('data/citeseer/sampled/s1/')
-    generate_mask('data/BlogCatalog/')
+    for i in range(5):
+        generate_mask('data/pubmed/sampled/s{}'.format(i))
+    #convert_gcn_data('pubmed', 'embedding_test/src/baseline/gcn/gcn/data/', 'data/')
