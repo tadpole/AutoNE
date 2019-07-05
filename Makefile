@@ -2,14 +2,18 @@
 #method = gcn
 #task = classification
 
-dataset = Wikipedia
-method = deepwalk
-task = link_predict
-ms = mle_w#random_search b_opt
+dataset = BlogCatalog ### can be ['BlogCatalog', 'Wikipedia', 'pubmed']
+method = deepwalk ### can be ['deepwalk', 'AROPE', 'gcn']
+task = link_predict ### can be ['link_predict', 'classification']
+ms = mle ### can be ['mle', 'random_search', 'b_opt']
 ms_name = $(shell echo $(ms) | sed "s/ /_/g")
 #log_file = logs/l_$(dataset)_$(method)_$(task).log
 log_file = logs/l_$(dataset)_$(method)_$(task)_$(ms_name).log
 log_pid = logs/pid_$(dataset)_$(method)_$(task)
+
+
+sample:
+	python3 -u src/main.py $(dataset) sample $(task) $(ms)
 
 run:
 	python3 -u src/main.py $(dataset) $(method) $(task) $(ms)

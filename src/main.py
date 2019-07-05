@@ -249,53 +249,6 @@ def mle_k(dataset_name, target_model, task='classification', sampled_number=10, 
         return X_t, res_t, info
     return X_t, res_t
 
-def mle_l(dataset_name, target_model, task='classification', sampled_number=10, without_wne=False, k=16, s=0, debug=False):
-    X = []
-    y = []
-    params = utils.Params(target_model)
-    ps = params.arg_names
-    total_t = 0.0
-    info = []
-    X_t, res_t = None, -1.0
-    if without_wne:
-        gp = utils.GaussianProcessRegressor()
-    else:
-        K = utils.K(len(ps))
-        gp = utils.GaussianProcessRegressor(K)
-    b_t = time.time()
-    for t in range(sampled_number):
-        i = t
-        wne = get_wne(dataset_name, 'sampled/s{}'.format(i), cache=True)
-        for v in range(k):
-            kargs = params.random_args(ps)
-            res = get_result(dataset_name, target_model, task, kargs, 'sampled/s{}'.format(i))
-            if without_wne:
-                X.append([kargs[p] for p in ps])
-            else:
-                X.append(np.hstack(([kargs[p] for p in ps], wne)))
-            if debug:
-                print('sample {}, {}/{}, kargs: {}, res: {}, time: {:.4f}s'.format(t, v, k, [kargs[p] for p in ps], res, time.time()-b_t))
-            y.append(res)
-    for t in range(s):
-        b_t = time.time()
-        gp.fit(np.vstack(X), y)
-        X_temp, res_temp = _get_mle_result(gp, dataset_name, target_model, task, without_wne, params, ps, 0, X, y)
-        if without_wne:
-            X.append(X_temp)
-        else:
-            X.append(np.hstack((X_temp, wne)))
-        y.append(res_temp)
-        if res_t < res_temp:
-            res_t = res_temp
-            X_t = X_temp
-        e_t = time.time()
-        total_t += e_t-b_t
-        info.append([res_temp, total_t])
-        print('iters: {}/{}, params: {}, res: {}, time: {:.4f}s'.format(t, s, X_temp, res_temp, total_t))
-    if debug:
-        return X_t, res_t, info
-    return X_t, res_t
-
 def random_search(dataset_name, target_model, task, k=16, debug=False, sampled_dir=''):
     X = []
     y = []
@@ -383,7 +336,7 @@ def main(args):
         dataset_name = 'pubmed'
         target_model = 'gcn'
         task = 'classification'
-        ms = ['mle_k', 'random_search', 'b_opt']
+        ms = ['mle', 'random_search', 'b_opt']
     else:
         dataset_name = args[0]
         target_model = args[1]
@@ -399,11 +352,12 @@ def main(args):
         with_test = True
     if target_model == 'gcn':
         feature_path = 'data/{}/features.npz'.format(dataset_name)
-    #G = utils.load_graph(dataset_path, label_path)
-    #split_graph(G, 'data/{}_0.8'.format(dataset_name), radio=0.8)
-    #sampled_number = 10#int(np.sqrt(G.number_of_nodes()))
-    #sample_graph(G, 'data/{}/sampled'.format(dataset_name), s_n=1000, times=5, with_test=with_test, feature_path=feature_path)
-    #return 0
+    if target_model == 'sample':
+        G = utils.load_graph(dataset_path, label_path)
+        split_graph(G, 'data/{}_0.8'.format(dataset_name), radio=0.8)
+        sampled_number = 10#int(np.sqrt(G.number_of_nodes()))
+        sample_graph(G, 'data/{}/sampled'.format(dataset_name), s_n=1000, times=5, with_test=with_test, feature_path=feature_path)
+        return 0
     ks = 5
     #test(dataset_name, target_model, task)
     sampled_dir = ''
@@ -412,15 +366,10 @@ def main(args):
         res = []
         for i in range(ks):
             info = []
-            if m in ['mle', 'mle_t']:
-                me = eval(m)
-                X, y, info = me(dataset_name, target_model, task, sampled_number=5, without_wne=False, k=10, s=0, debug=True)
-            elif m == 'mle_k':
+            if m == 'mle':
                 X, y, info = mle_k(dataset_name, target_model, task, sampled_number=5, without_wne=False, k=5, s=10, debug=True)
             elif m == 'mle_w':
                 X, y, info = mle_k(dataset_name, target_model, task, sampled_number=5, without_wne=True, k=5, s=10, debug=True)
-            elif m == 'mle_l':
-                X, y, info = mle_k(dataset_name, target_model, task, sampled_number=5, without_wne=False, k=5, s=5, debug=True)
             elif m == 'random_search':
                 X, y, info = random_search(dataset_name, target_model, task, k=10, debug=True, sampled_dir=sampled_dir)
             elif m == 'random_search_l':
