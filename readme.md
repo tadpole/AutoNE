@@ -6,6 +6,10 @@ The Implementation of "[AutoNE: Hyperparameter Optimization for Massive Network 
 ```
 $ pip3 install -r requirements.txt
 ```
+Besides, this code relies on my submodule [embeddding_test](https://github.com/tadpole/embedding_test). Please use following command to download the code:
+```
+$ git clone --recursive git@github.com:tadpole/AutoNE.git
+```
 
 ### Uasge
 The Dataset can be downloaded from [here](https://cloud.tsinghua.edu.cn/f/73d0675acf134f259bf4/?dl=1).
