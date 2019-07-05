@@ -11,7 +11,7 @@ Besides, this code relies on my submodule [embeddding_test](https://github.com/t
 $ git clone --recursive git@github.com:tadpole/AutoNE.git
 ```
 
-### Uasge
+### Usage
 The Dataset can be downloaded from [here](https://cloud.tsinghua.edu.cn/f/73d0675acf134f259bf4/?dl=1).
 
 You can change 'dataset', 'method', 'task', 'ms' variables in Makefile to select data and model.
