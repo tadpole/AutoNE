@@ -8,7 +8,7 @@ $ pip3 install -r requirements.txt
 ```
 
 ### Uasge
-The Dataset can be downloaded from [here](https://cloud.tsinghua.edu.cn/f/73d0675acf134f259bf4/?dl=1)
+The Dataset can be downloaded from [here](https://cloud.tsinghua.edu.cn/f/73d0675acf134f259bf4/?dl=1).
 
 You can change 'dataset', 'method', 'task', 'ms' variables in Makefile to select data and model.
 
@@ -31,7 +31,7 @@ $ make run
 
 ### Cite
 If you find this code useful, please cite our paper:
-
+```
 @inproceedings{tu2019autone,
   title={AutoNE: Hyperparameter Optimization for Massive Network Embedding},
   author={Tu, Ke and Ma, Jianxin and Cui, Peng and Pei, Jian and Zhu, Wenwu},
@@ -39,3 +39,4 @@ If you find this code useful, please cite our paper:
   year={2019},
   organization={ACM}
 }
+```
