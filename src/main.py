@@ -15,7 +15,7 @@ from bayes_opt import BayesianOptimization
 import utils
 
 embedding_test_dir = 'embedding_test'
-debug = False
+debug = True
 cache = True
 
 def split_graph(G, output_dir, radio=0.8):
